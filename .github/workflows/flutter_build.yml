@@ -32,33 +32,45 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter (3.19.6 — kompatibel font_awesome_flutter)
+      - name: Setup Flutter (latest stable)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
           channel: 'stable'
           cache: false
 
-      - name: Check Flutter
+      - name: Check Flutter Version
         run: flutter --version
 
       - name: Download & Extract ZIP
         run: |
-          echo "Downloading ZIP from: ${{ inputs.zip_url }}"
+          echo "⬇️ Downloading ZIP..."
           curl -L --retry 3 -o source.zip "${{ inputs.zip_url }}"
           unzip -q source.zip -d project_raw
 
           FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 4 | head -1 | xargs dirname)
           if [ -z "$FLUTTER_ROOT" ]; then
-            echo "❌ pubspec.yaml tidak ditemukan di dalam ZIP!"
+            echo "❌ pubspec.yaml tidak ditemukan!"
             exit 1
           fi
           echo "✅ Flutter root: $FLUTTER_ROOT"
           echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
-      - name: Flutter pub get
+      - name: Fix incompatible packages
         working-directory: ${{ env.FLUTTER_ROOT }}
-        run: flutter pub get
+        run: |
+          # Upgrade font_awesome_flutter ke versi terbaru yang kompatibel Flutter 3.8+
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            echo "🔧 Fixing font_awesome_flutter..."
+            sed -i 's/font_awesome_flutter:.*/font_awesome_flutter: ^10.8.0/' pubspec.yaml
+            flutter pub add font_awesome_flutter:'^10.8.0' --no-pub || true
+          fi
+
+          # Hapus pubspec.lock agar dependency resolve ulang dengan versi kompatibel
+          rm -f pubspec.lock
+
+      - name: Flutter pub upgrade
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter pub upgrade --tighten || flutter pub get
 
       - name: Build APK Release
         if: ${{ inputs.build_type == 'release' }}
@@ -77,7 +89,7 @@ jobs:
             echo "❌ APK tidak ditemukan!"
             exit 1
           fi
-          echo "✅ APK: $APK_PATH"
+          echo "✅ APK ditemukan: $APK_PATH"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
