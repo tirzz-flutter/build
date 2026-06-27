@@ -1,6 +1,5 @@
 name: Flutter Build APK
 
-# Dipicu oleh server.js (triggerWorkflow) lewat workflow_dispatch.
 on:
   workflow_dispatch:
     inputs:
@@ -22,6 +21,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
 
     steps:
       - name: Set up JDK 17
@@ -34,6 +35,90 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.32.0"
+          channel: "stable"
+          cache: true
+
+      - name: Download project ZIP
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p project
+          echo "📥 Downloading: ${{ inputs.zip_url }}"
+
+          MAX_RETRY=5
+          DELAY=5
+          for i in $(seq 1 $MAX_RETRY); do
+            HTTP_CODE=$(curl -sSL -w "%{http_code}" -o source.zip \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/octet-stream" \
+              "${{ inputs.zip_url }}")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Download sukses (attempt $i)."
+              break
+            fi
+            echo "⚠️ Attempt $i gagal, HTTP code: $HTTP_CODE. Retry dalam ${DELAY}s..."
+            sleep $DELAY
+            if [ "$i" = "$MAX_RETRY" ]; then
+              echo "##[error]Gagal download ZIP setelah $MAX_RETRY percobaan. HTTP code terakhir: $HTTP_CODE"
+              echo "##[error]URL: ${{ inputs.zip_url }}"
+              exit 9
+            fi
+          done
+
+          if [ ! -s source.zip ]; then
+            echo "##[error]File ZIP hasil download kosong/korup."
+            exit 1
+          fi
+
+          unzip -q source.zip -d project
+          echo "✅ Extracted."
+
+      - name: Cari folder pubspec.yaml
+        id: locate
+        run: |
+          set -e
+          PUBSPEC_PATH=$(find project -maxdepth 4 -name "pubspec.yaml" | head -n 1)
+          if [ -z "$PUBSPEC_PATH" ]; then
+            echo "❌ pubspec.yaml tidak ditemukan di dalam ZIP!"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "📦 Project dir: $PROJECT_DIR"
+
+      - name: Flutter pub get
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: flutter pub get
+
+      - name: Build APK (release)
+        if: ${{ inputs.build_type == 'release' || inputs.build_type == '' }}
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: flutter build apk --release
+
+      - name: Build APK (debug)
+        if: ${{ inputs.build_type == 'debug' }}
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: flutter build apk --debug
+
+      - name: Siapkan output APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          OUT_DIR="build/app/outputs/flutter-apk"
+          if [ "${{ inputs.build_type }}" = "debug" ]; then
+            cp "$OUT_DIR/app-debug.apk" "$GITHUB_WORKSPACE/output/${{ inputs.tag }}.apk"
+          else
+            cp "$OUT_DIR/app-release.apk" "$GITHUB_WORKSPACE/output/${{ inputs.tag }}.apk"
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-build-${{ inputs.tag }}
+          path: output/*.apk
+          retention-days: 1
           channel: "stable"
           cache: true
 
