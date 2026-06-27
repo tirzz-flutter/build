@@ -29,24 +29,26 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
           channel: 'stable'
-          cache: true
+          cache: false
+
+      - name: Check Flutter
+        run: flutter --version
 
       - name: Download & Extract ZIP
         run: |
           echo "Downloading ZIP from: ${{ inputs.zip_url }}"
-          curl -L -o source.zip "${{ inputs.zip_url }}"
+          curl -L --retry 3 -o source.zip "${{ inputs.zip_url }}"
           unzip -q source.zip -d project_raw
 
-          # Cari folder yang punya pubspec.yaml (root Flutter project)
-          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 3 | head -1 | xargs dirname)
+          # Cari folder root Flutter (yang ada pubspec.yaml)
+          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 4 | head -1 | xargs dirname)
           if [ -z "$FLUTTER_ROOT" ]; then
             echo "❌ pubspec.yaml tidak ditemukan di dalam ZIP!"
             exit 1
@@ -58,21 +60,25 @@ jobs:
         working-directory: ${{ env.FLUTTER_ROOT }}
         run: flutter pub get
 
-      - name: Build APK (Release)
+      - name: Build APK Release
         if: ${{ inputs.build_type == 'release' }}
         working-directory: ${{ env.FLUTTER_ROOT }}
         run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Build APK (Debug)
+      - name: Build APK Debug
         if: ${{ inputs.build_type == 'debug' }}
         working-directory: ${{ env.FLUTTER_ROOT }}
         run: flutter build apk --debug --no-tree-shake-icons
 
-      - name: Find APK
+      - name: Find & Upload APK
         run: |
           APK_PATH=$(find ${{ env.FLUTTER_ROOT }}/build/app/outputs -name "*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ APK tidak ditemukan!"
+            exit 1
+          fi
+          echo "✅ APK: $APK_PATH"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
-          echo "✅ APK ditemukan: $APK_PATH"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
