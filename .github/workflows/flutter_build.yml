@@ -91,17 +91,25 @@ jobs:
         working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -e
-          echo "🔧 Patching pubspec.yaml..."
+          echo "🔧 Patching pubspec.yaml untuk kompatibilitas Flutter 3.27.4..."
 
-          # Hapus pubspec.lock agar resolve ulang
+          # Hapus pubspec.lock agar resolve ulang dari awal
           [ -f pubspec.lock ] && rm pubspec.lock && echo "🗑️ pubspec.lock dihapus"
 
-          # Patch sdk constraint agar sesuai Flutter 3.27.4 (Dart 3.6.x)
-          sed -i 's/sdk: *["\x27].*["\x27]/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
-          echo "✅ SDK constraint di-patch"
+          # Patch sdk constraint: turunkan minimum dari ^3.8.1 ke >=3.0.0 <4.0.0
+          # sehingga Flutter 3.27.4 (Dart 3.6.x) bisa dipakai
+          sed -i 's/sdk: *["'"'"']>=*[0-9.]* *<*[0-9.]*["'"'"']/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
+          sed -i 's/sdk: *["'"'"']\^[0-9.]*["'"'"']/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
 
-          echo "📄 environment section:"
-          grep -A3 "^environment:" pubspec.yaml || true
+          # Patch font_awesome_flutter ke versi 10.6.0 yang kompatibel Dart 3.6
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            sed -i 's/font_awesome_flutter: *["'"'"'^>=<~]*[0-9.]*/font_awesome_flutter: ^10.6.0/' pubspec.yaml
+            sed -i 's/font_awesome_flutter: *\^[0-9.]*/font_awesome_flutter: ^10.6.0/' pubspec.yaml
+            echo "✅ font_awesome_flutter di-patch ke ^10.6.0"
+          fi
+
+          echo "📄 pubspec.yaml (environment + dependencies awal):"
+          head -40 pubspec.yaml
 
       - name: Flutter pub get
         working-directory: ${{ steps.locate.outputs.project_dir }}
