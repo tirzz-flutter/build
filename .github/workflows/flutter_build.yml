@@ -1,0 +1,73 @@
+name: Flutter Build APK
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'ZIP URL'
+        required: true
+      tag:
+        description: 'Tag'
+        required: true
+      build_type:
+        description: 'release or debug'
+        required: false
+        default: 'release'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: Download and Extract ZIP
+        run: |
+          curl -L --retry 3 -o source.zip "${{ inputs.zip_url }}"
+          unzip -q source.zip -d project_raw
+          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 4 | head -1 | xargs dirname)
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
+
+      - name: Fix font_awesome_flutter
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: |
+          rm -f pubspec.lock
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            python3 -c "
+content = open('pubspec.yaml').read()
+if 'dependency_overrides:' not in content:
+    content += '''
+dependency_overrides:
+  font_awesome_flutter:
+    git:
+      url: https://github.com/fluttercommunity/font_awesome_flutter.git
+      ref: master
+'''
+open('pubspec.yaml','w').write(content)
+print('Patched')
+"
+          fi
+
+      - name: Flutter pub get
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --${{ inputs.build_type }} --no-tree-shake-icons
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.tag }}
+          path: ${{ env.FLUTTER_ROOT }}/build/app/outputs/flutter-apk/app-${{ inputs.build_type }}.apk
+          retention-days: 1
+          
