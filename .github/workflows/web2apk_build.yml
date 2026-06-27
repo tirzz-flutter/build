@@ -1,39 +1,143 @@
 name: Web2APK Build
 
-# Dipicu oleh server.js (triggerWeb2ApkWorkflow) lewat workflow_dispatch.
 on:
   workflow_dispatch:
     inputs:
       web_url:
-        description: "URL website yang akan dibungkus jadi APK"
+        description: 'URL website yang akan dijadikan APK'
         required: true
         type: string
       app_name:
-        description: "Nama aplikasi"
+        description: 'Nama aplikasi'
         required: true
         type: string
       icon_url:
-        description: "URL icon aplikasi (PNG), opsional"
+        description: 'URL icon aplikasi (opsional)'
         required: false
+        default: ''
         type: string
       tag:
-        description: "Tag unik build"
+        description: 'Build tag / identifier'
         required: true
         type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
-      - name: Set up JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'zulu'
+          java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          channel: 'stable'
+          cache: true
+
+      - name: Create WebView Flutter Project
+        run: |
+          flutter create --org com.tirzz.web2apk web2apk_project
+          cd web2apk_project
+
+          # Tambahkan dependency webview_flutter
+          flutter pub add webview_flutter
+
+          # Generate main.dart untuk WebView
+          cat > lib/main.dart << 'DART_EOF'
+          import 'package:flutter/material.dart';
+          import 'package:webview_flutter/webview_flutter.dart';
+
+          void main() {
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'WEB_APP_NAME',
+                debugShowCheckedModeBanner: false,
+                home: const WebViewPage(),
+              );
+            }
+          }
+
+          class WebViewPage extends StatefulWidget {
+            const WebViewPage({super.key});
+
+            @override
+            State<WebViewPage> createState() => _WebViewPageState();
+          }
+
+          class _WebViewPageState extends State<WebViewPage> {
+            late final WebViewController _controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _controller = WebViewController()
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..loadRequest(Uri.parse('WEB_APP_URL'));
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: WebViewWidget(controller: _controller),
+              );
+            }
+          }
+          DART_EOF
+
+          # Replace placeholder
+          sed -i "s|WEB_APP_NAME|${{ inputs.app_name }}|g" lib/main.dart
+          sed -i "s|WEB_APP_URL|${{ inputs.web_url }}|g" lib/main.dart
+
+          # Update app name di AndroidManifest
+          sed -i "s|android:label=\".*\"|android:label=\"${{ inputs.app_name }}\"|g" android/app/src/main/AndroidManifest.xml
+
+          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: Download Icon (if provided)
+        if: ${{ inputs.icon_url != '' }}
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          curl -L -o /tmp/icon.png "${{ inputs.icon_url }}" || true
+          if [ -f /tmp/icon.png ]; then
+            flutter pub add flutter_launcher_icons
+            cat > flutter_launcher_icons.yaml << 'EOF'
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: "/tmp/icon.png"
+          EOF
+            flutter pub run flutter_launcher_icons || true
+          fi
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Find APK
+        run: |
+          APK_PATH=$(find ${{ env.PROJECT_DIR }}/build/app/outputs -name "*.apk" | head -1)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "✅ APK: $APK_PATH"
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.tag }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 1
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.19.6"
