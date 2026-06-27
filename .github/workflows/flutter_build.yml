@@ -87,15 +87,26 @@ jobs:
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
           echo "📦 Project dir: $PROJECT_DIR"
 
-      - name: Patch package tidak kompatibel
+      - name: Patch pubspec.yaml (fix incompatible packages)
         working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -e
-          # Upgrade font_awesome_flutter ke versi yang support Dart 3.8+
+          echo "🔧 Patching pubspec.yaml..."
+
+          # Fix font_awesome_flutter: ganti versi apapun ke ^10.7.0 yang kompatibel Dart 3.8+
           if grep -q "font_awesome_flutter" pubspec.yaml; then
-            echo "🔧 Patching font_awesome_flutter ke versi kompatibel..."
-            flutter pub add font_awesome_flutter:^10.8.0 --no-example 2>/dev/null || true
+            sed -i 's/font_awesome_flutter:.*$/font_awesome_flutter: ^10.7.0/' pubspec.yaml
+            echo "✅ font_awesome_flutter di-patch ke ^10.7.0"
           fi
+
+          # Hapus pubspec.lock agar dependensi di-resolve ulang
+          if [ -f pubspec.lock ]; then
+            rm pubspec.lock
+            echo "🗑️ pubspec.lock dihapus (akan di-resolve ulang)"
+          fi
+
+          echo "📄 pubspec.yaml setelah patch:"
+          grep -A1 "font_awesome_flutter" pubspec.yaml || echo "(tidak ada font_awesome_flutter)"
 
       - name: Flutter pub get
         working-directory: ${{ steps.locate.outputs.project_dir }}
