@@ -44,8 +44,7 @@ jobs:
         run: |
           set -e
           mkdir -p project
-          echo "📥 Downloading: ${{ inputs.zip_url }}"
-
+          echo "Downloading: ${{ inputs.zip_url }}"
           MAX_RETRY=5
           DELAY=5
           for i in $(seq 1 $MAX_RETRY); do
@@ -54,10 +53,10 @@ jobs:
               -H "Accept: application/octet-stream" \
               "${{ inputs.zip_url }}")
             if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ Download sukses (attempt $i)."
+              echo "Download sukses attempt $i"
               break
             fi
-            echo "⚠️ Attempt $i gagal, HTTP code: $HTTP_CODE. Retry dalam ${DELAY}s..."
+            echo "Attempt $i gagal HTTP $HTTP_CODE retry ${DELAY}s..."
             sleep $DELAY
             if [ "$i" = "$MAX_RETRY" ]; then
               echo "##[error]Gagal download ZIP setelah $MAX_RETRY percobaan. HTTP code terakhir: $HTTP_CODE"
@@ -65,14 +64,12 @@ jobs:
               exit 9
             fi
           done
-
           if [ ! -s source.zip ]; then
             echo "##[error]File ZIP hasil download kosong/korup."
             exit 1
           fi
-
           unzip -q source.zip -d project
-          echo "✅ Extracted."
+          echo "Extracted OK"
 
       - name: Cari folder pubspec.yaml
         id: locate
@@ -80,36 +77,53 @@ jobs:
           set -e
           PUBSPEC_PATH=$(find project -maxdepth 4 -name "pubspec.yaml" | head -n 1)
           if [ -z "$PUBSPEC_PATH" ]; then
-            echo "❌ pubspec.yaml tidak ditemukan di dalam ZIP!"
+            echo "##[error]pubspec.yaml tidak ditemukan di dalam ZIP!"
             exit 1
           fi
           PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "📦 Project dir: $PROJECT_DIR"
+          echo "Project dir: $PROJECT_DIR"
 
       - name: Patch pubspec.yaml
         working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -e
-          echo "🔧 Patching pubspec.yaml untuk kompatibilitas Flutter 3.27.4..."
 
-          # Hapus pubspec.lock agar resolve ulang dari awal
-          [ -f pubspec.lock ] && rm pubspec.lock && echo "🗑️ pubspec.lock dihapus"
+          # Hapus pubspec.lock
+          rm -f pubspec.lock
+          echo "pubspec.lock dihapus"
 
-          # Patch sdk constraint: turunkan minimum dari ^3.8.1 ke >=3.0.0 <4.0.0
-          # sehingga Flutter 3.27.4 (Dart 3.6.x) bisa dipakai
-          sed -i 's/sdk: *["'"'"']>=*[0-9.]* *<*[0-9.]*["'"'"']/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
-          sed -i 's/sdk: *["'"'"']\^[0-9.]*["'"'"']/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
+          # Buat script python di file terpisah (hindari masalah indentasi heredoc)
+          cat > /tmp/patch_pubspec.py << 'EOF'
+import re
 
-          # Patch font_awesome_flutter ke versi 10.6.0 yang kompatibel Dart 3.6
-          if grep -q "font_awesome_flutter" pubspec.yaml; then
-            sed -i 's/font_awesome_flutter: *["'"'"'^>=<~]*[0-9.]*/font_awesome_flutter: ^10.6.0/' pubspec.yaml
-            sed -i 's/font_awesome_flutter: *\^[0-9.]*/font_awesome_flutter: ^10.6.0/' pubspec.yaml
-            echo "✅ font_awesome_flutter di-patch ke ^10.6.0"
-          fi
+with open("pubspec.yaml", "r") as f:
+    content = f.read()
 
-          echo "📄 pubspec.yaml (environment + dependencies awal):"
-          head -40 pubspec.yaml
+# Patch sdk constraint
+content = re.sub(
+    r'(sdk\s*:\s*)["\']?[\^>=<0-9. ]+["\']?',
+    'sdk: ">=3.0.0 <4.0.0"',
+    content
+)
+
+# Patch font_awesome_flutter
+content = re.sub(
+    r'(font_awesome_flutter\s*:\s*)[^\n]+',
+    r'font_awesome_flutter: ^10.6.0',
+    content
+)
+
+with open("pubspec.yaml", "w") as f:
+    f.write(content)
+
+print("Patch OK")
+for line in content.splitlines():
+    if "sdk" in line or "font_awesome" in line:
+        print(" >>", line)
+EOF
+
+          python3 /tmp/patch_pubspec.py
 
       - name: Flutter pub get
         working-directory: ${{ steps.locate.outputs.project_dir }}
