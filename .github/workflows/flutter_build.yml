@@ -4,157 +4,80 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: "URL ZIP project Flutter (asset GitHub Release)"
+        description: 'URL to the ZIP file of the Flutter project'
         required: true
         type: string
       tag:
-        description: "Tag unik build (untuk penamaan artifact)"
+        description: 'Build tag / identifier'
         required: true
         type: string
       build_type:
-        description: "release atau debug"
+        description: 'Build type: debug or release'
         required: false
-        type: string
-        default: release
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: read
 
     steps:
-      - name: Set up JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'zulu'
+          java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.27.4"
-          channel: "stable"
+          flutter-version: 'stable'
+          channel: 'stable'
           cache: true
 
-      - name: Download project ZIP
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download & Extract ZIP
         run: |
-          set -e
-          mkdir -p project
-          echo "Downloading: ${{ inputs.zip_url }}"
-          MAX_RETRY=5
-          DELAY=5
-          for i in $(seq 1 $MAX_RETRY); do
-            HTTP_CODE=$(curl -sSL -w "%{http_code}" -o source.zip \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/octet-stream" \
-              "${{ inputs.zip_url }}")
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Download sukses attempt $i"
-              break
-            fi
-            echo "Attempt $i gagal HTTP $HTTP_CODE retry ${DELAY}s..."
-            sleep $DELAY
-            if [ "$i" = "$MAX_RETRY" ]; then
-              echo "##[error]Gagal download ZIP setelah $MAX_RETRY percobaan. HTTP code terakhir: $HTTP_CODE"
-              echo "##[error]URL: ${{ inputs.zip_url }}"
-              exit 9
-            fi
-          done
-          if [ ! -s source.zip ]; then
-            echo "##[error]File ZIP hasil download kosong/korup."
+          echo "Downloading ZIP from: ${{ inputs.zip_url }}"
+          curl -L -o source.zip "${{ inputs.zip_url }}"
+          unzip -q source.zip -d project_raw
+
+          # Cari folder yang punya pubspec.yaml (root Flutter project)
+          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 3 | head -1 | xargs dirname)
+          if [ -z "$FLUTTER_ROOT" ]; then
+            echo "❌ pubspec.yaml tidak ditemukan di dalam ZIP!"
             exit 1
           fi
-          unzip -q source.zip -d project
-          echo "Extracted OK"
-
-      - name: Cari folder pubspec.yaml
-        id: locate
-        run: |
-          set -e
-          PUBSPEC_PATH=$(find project -maxdepth 4 -name "pubspec.yaml" | head -n 1)
-          if [ -z "$PUBSPEC_PATH" ]; then
-            echo "##[error]pubspec.yaml tidak ditemukan di dalam ZIP!"
-            exit 1
-          fi
-          PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Project dir: $PROJECT_DIR"
-
-      - name: Patch pubspec.yaml
-        working-directory: ${{ steps.locate.outputs.project_dir }}
-        run: |
-          set -e
-
-          # Hapus pubspec.lock
-          rm -f pubspec.lock
-          echo "pubspec.lock dihapus"
-
-          # Buat script python di file terpisah (hindari masalah indentasi heredoc)
-          cat > /tmp/patch_pubspec.py << 'EOF'
-import re
-
-with open("pubspec.yaml", "r") as f:
-    content = f.read()
-
-# Patch sdk constraint
-content = re.sub(
-    r'(sdk\s*:\s*)["\']?[\^>=<0-9. ]+["\']?',
-    'sdk: ">=3.0.0 <4.0.0"',
-    content
-)
-
-# Patch font_awesome_flutter
-content = re.sub(
-    r'(font_awesome_flutter\s*:\s*)[^\n]+',
-    r'font_awesome_flutter: ^10.6.0',
-    content
-)
-
-with open("pubspec.yaml", "w") as f:
-    f.write(content)
-
-print("Patch OK")
-for line in content.splitlines():
-    if "sdk" in line or "font_awesome" in line:
-        print(" >>", line)
-EOF
-
-          python3 /tmp/patch_pubspec.py
+          echo "✅ Flutter root: $FLUTTER_ROOT"
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
       - name: Flutter pub get
-        working-directory: ${{ steps.locate.outputs.project_dir }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
         run: flutter pub get
 
-      - name: Build APK (release)
-        if: ${{ inputs.build_type == 'release' || inputs.build_type == '' }}
-        working-directory: ${{ steps.locate.outputs.project_dir }}
-        run: flutter build apk --release
+      - name: Build APK (Release)
+        if: ${{ inputs.build_type == 'release' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Build APK (debug)
+      - name: Build APK (Debug)
         if: ${{ inputs.build_type == 'debug' }}
-        working-directory: ${{ steps.locate.outputs.project_dir }}
-        run: flutter build apk --debug
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --debug --no-tree-shake-icons
 
-      - name: Siapkan output APK
-        working-directory: ${{ steps.locate.outputs.project_dir }}
+      - name: Find APK
         run: |
-          set -e
-          mkdir -p "$GITHUB_WORKSPACE/output"
-          OUT_DIR="build/app/outputs/flutter-apk"
-          if [ "${{ inputs.build_type }}" = "debug" ]; then
-            cp "$OUT_DIR/app-debug.apk" "$GITHUB_WORKSPACE/output/${{ inputs.tag }}.apk"
-          else
-            cp "$OUT_DIR/app-release.apk" "$GITHUB_WORKSPACE/output/${{ inputs.tag }}.apk"
-          fi
+          APK_PATH=$(find ${{ env.FLUTTER_ROOT }}/build/app/outputs -name "*.apk" | head -1)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "✅ APK ditemukan: $APK_PATH"
 
-      - name: Upload APK artifact
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-build-${{ inputs.tag }}
-          path: output/*.apk
+          name: apk-${{ inputs.tag }}
+          path: ${{ env.APK_PATH }}
           retention-days: 1
           
