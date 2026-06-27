@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: 'URL to the ZIP file of the Flutter project'
+        description: 'URL ZIP project Flutter'
         required: true
         type: string
       tag:
-        description: 'Build tag / identifier'
+        description: 'Build tag'
         required: true
         type: string
       build_type:
-        description: 'Build type: debug or release'
+        description: 'Tipe build'
         required: false
         default: 'release'
         type: choice
@@ -32,18 +32,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter (latest stable)
+      - name: Setup Flutter (stable)
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: false
 
-      - name: Check Flutter Version
+      - name: Flutter version
         run: flutter --version
 
       - name: Download & Extract ZIP
         run: |
-          echo "⬇️ Downloading ZIP..."
           curl -L --retry 3 -o source.zip "${{ inputs.zip_url }}"
           unzip -q source.zip -d project_raw
 
@@ -52,25 +51,60 @@ jobs:
             echo "❌ pubspec.yaml tidak ditemukan!"
             exit 1
           fi
-          echo "✅ Flutter root: $FLUTTER_ROOT"
+          echo "✅ FLUTTER_ROOT=$FLUTTER_ROOT"
           echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
-      - name: Fix incompatible packages
+      - name: Fix font_awesome_flutter - override ke versi git yang sudah fix
         working-directory: ${{ env.FLUTTER_ROOT }}
         run: |
-          # Upgrade font_awesome_flutter ke versi terbaru yang kompatibel Flutter 3.8+
-          if grep -q "font_awesome_flutter" pubspec.yaml; then
-            echo "🔧 Fixing font_awesome_flutter..."
-            sed -i 's/font_awesome_flutter:.*/font_awesome_flutter: ^10.8.0/' pubspec.yaml
-            flutter pub add font_awesome_flutter:'^10.8.0' --no-pub || true
-          fi
-
-          # Hapus pubspec.lock agar dependency resolve ulang dengan versi kompatibel
           rm -f pubspec.lock
 
-      - name: Flutter pub upgrade
+          python3 << 'PYEOF'
+import re
+
+with open("pubspec.yaml", "r") as f:
+    content = f.read()
+
+print("=== pubspec.yaml SEBELUM patch ===")
+print(content[:2000])
+
+# Tambahkan dependency_overrides untuk font_awesome_flutter
+# Gunakan versi dari master branch yang sudah fix IconData final class
+override_section = """
+dependency_overrides:
+  font_awesome_flutter:
+    git:
+      url: https://github.com/fluttercommunity/font_awesome_flutter.git
+      ref: master
+"""
+
+if "dependency_overrides:" in content:
+    # Sudah ada, inject font_awesome ke dalamnya
+    font_entry = (
+        "  font_awesome_flutter:\n"
+        "    git:\n"
+        "      url: https://github.com/fluttercommunity/font_awesome_flutter.git\n"
+        "      ref: master\n"
+    )
+    # Jangan duplicate
+    if "font_awesome_flutter" not in content.split("dependency_overrides:")[1].split("\n\n")[0]:
+        content = content.replace(
+            "dependency_overrides:",
+            "dependency_overrides:\n" + font_entry
+        )
+else:
+    content = content.rstrip() + "\n" + override_section
+
+with open("pubspec.yaml", "w") as f:
+    f.write(content)
+
+print("\n=== pubspec.yaml SETELAH patch ===")
+print(content[-1500:])
+PYEOF
+
+      - name: Flutter pub get
         working-directory: ${{ env.FLUTTER_ROOT }}
-        run: flutter pub upgrade --tighten || flutter pub get
+        run: flutter pub get
 
       - name: Build APK Release
         if: ${{ inputs.build_type == 'release' }}
@@ -84,12 +118,12 @@ jobs:
 
       - name: Find APK
         run: |
-          APK_PATH=$(find ${{ env.FLUTTER_ROOT }}/build/app/outputs -name "*.apk" | head -1)
+          APK_PATH=$(find "${{ env.FLUTTER_ROOT }}/build/app/outputs" -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
             echo "❌ APK tidak ditemukan!"
             exit 1
           fi
-          echo "✅ APK ditemukan: $APK_PATH"
+          echo "✅ APK: $APK_PATH"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
