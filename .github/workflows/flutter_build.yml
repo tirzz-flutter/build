@@ -33,7 +33,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.19.6"
+          flutter-version: "3.32.0"
           channel: "stable"
           cache: true
 
@@ -46,7 +46,10 @@ jobs:
           MAX_RETRY=5
           DELAY=5
           for i in $(seq 1 $MAX_RETRY); do
-            HTTP_CODE=$(curl -sSL -w "%{http_code}" -o source.zip "${{ inputs.zip_url }}")
+            HTTP_CODE=$(curl -sSL -w "%{http_code}" -o source.zip \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/octet-stream" \
+              "${{ inputs.zip_url }}")
             if [ "$HTTP_CODE" = "200" ]; then
               echo "✅ Download sukses (attempt $i)."
               break
