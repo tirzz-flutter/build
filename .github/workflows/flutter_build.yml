@@ -34,7 +34,6 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'
           channel: stable
           cache: false
 
@@ -64,12 +63,40 @@ jobs:
       - name: Build APK Release
         if: ${{ inputs.build_type == 'release' }}
         working-directory: ${{ env.FLUTTER_ROOT }}
+        id: build_release
+        continue-on-error: true
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Build APK Debug
         if: ${{ inputs.build_type != 'release' }}
         working-directory: ${{ env.FLUTTER_ROOT }}
+        id: build_debug
+        continue-on-error: true
         run: flutter build apk --debug --no-tree-shake-icons
+
+      - name: Retry with font_awesome_flutter compatibility fix (release)
+        if: ${{ inputs.build_type == 'release' && steps.build_release.outcome == 'failure' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: |
+          echo "[INFO] Build pertama gagal, mencoba dengan font_awesome_flutter versi lama (10.7.0)..."
+          rm -f pubspec.lock
+          if grep -q "font_awesome_flutter" pubspec.yaml && ! grep -q "dependency_overrides:" pubspec.yaml; then
+            printf '\ndependency_overrides:\n  font_awesome_flutter: 10.7.0\n' >> pubspec.yaml
+          fi
+          flutter pub get
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: Retry with font_awesome_flutter compatibility fix (debug)
+        if: ${{ inputs.build_type != 'release' && steps.build_debug.outcome == 'failure' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: |
+          echo "[INFO] Build pertama gagal, mencoba dengan font_awesome_flutter versi lama (10.7.0)..."
+          rm -f pubspec.lock
+          if grep -q "font_awesome_flutter" pubspec.yaml && ! grep -q "dependency_overrides:" pubspec.yaml; then
+            printf '\ndependency_overrides:\n  font_awesome_flutter: 10.7.0\n' >> pubspec.yaml
+          fi
+          flutter pub get
+          flutter build apk --debug --no-tree-shake-icons
 
       - name: Find APK
         run: |
