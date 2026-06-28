@@ -49,10 +49,10 @@ jobs:
 
           FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname)
           if [ -z "$FLUTTER_ROOT" ]; then
-            echo "âŒ pubspec.yaml tidak ditemukan di ZIP!"
+            echo "[ERROR] pubspec.yaml tidak ditemukan di ZIP!"
             exit 1
           fi
-          echo "âœ… Flutter root: $FLUTTER_ROOT"
+          echo "[OK] Flutter root: $FLUTTER_ROOT"
           echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
       - name: Fix font_awesome_flutter compatibility
@@ -63,9 +63,9 @@ jobs:
             if ! grep -q "dependency_overrides:" pubspec.yaml; then
               echo "Detected font_awesome_flutter, pinning to compatible version (10.7.0)..."
               printf '\ndependency_overrides:\n  font_awesome_flutter: 10.7.0\n' >> pubspec.yaml
-              echo "âœ… Override ditambahkan"
+              echo "[OK] Override ditambahkan"
             else
-              echo "â„¹ï¸ dependency_overrides sudah ada"
+              echo "[INFO] dependency_overrides sudah ada"
             fi
           fi
 
@@ -87,10 +87,10 @@ jobs:
         run: |
           APK=$(find "${{ env.FLUTTER_ROOT }}/build/app/outputs" -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
-            echo "âŒ APK tidak ditemukan!"
+            echo "[ERROR] APK tidak ditemukan!"
             exit 1
           fi
-          echo "âœ… APK: $APK"
+          echo "[OK] APK: $APK"
           echo "APK_PATH=$APK" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
@@ -99,3 +99,4 @@ jobs:
           name: apk-${{ inputs.tag }}
           path: ${{ env.APK_PATH }}
           retention-days: 1
+          
