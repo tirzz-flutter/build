@@ -60,8 +60,8 @@ jobs:
           rm -f pubspec.lock
           if grep -q "font_awesome_flutter" pubspec.yaml; then
             if ! grep -q "dependency_overrides:" pubspec.yaml; then
-              echo "Detected font_awesome_flutter, applying git override..."
-              printf '\ndependency_overrides:\n  font_awesome_flutter:\n    git:\n      url: https://github.com/fluttercommunity/font_awesome_flutter.git\n      ref: master\n' >> pubspec.yaml
+              echo "Detected font_awesome_flutter, pinning to compatible version (10.7.0)..."
+              printf '\ndependency_overrides:\n  font_awesome_flutter: 10.7.0\n' >> pubspec.yaml
               echo "✅ Override ditambahkan"
             else
               echo "ℹ️ dependency_overrides sudah ada"
