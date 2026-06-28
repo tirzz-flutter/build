@@ -59,23 +59,13 @@ jobs:
         run: |
           rm -f pubspec.lock
           if grep -q "font_awesome_flutter" pubspec.yaml; then
-            echo "Detected font_awesome_flutter, applying git override..."
-            python3 << 'PYEOF'
-content = open("pubspec.yaml").read()
-override = """
-dependency_overrides:
-  font_awesome_flutter:
-    git:
-      url: https://github.com/fluttercommunity/font_awesome_flutter.git
-      ref: master
-"""
-if "dependency_overrides:" not in content:
-    content = content.rstrip() + "\n" + override
-    open("pubspec.yaml", "w").write(content)
-    print("✅ Override ditambahkan")
-else:
-    print("ℹ️ dependency_overrides sudah ada")
-PYEOF
+            if ! grep -q "dependency_overrides:" pubspec.yaml; then
+              echo "Detected font_awesome_flutter, applying git override..."
+              printf '\ndependency_overrides:\n  font_awesome_flutter:\n    git:\n      url: https://github.com/fluttercommunity/font_awesome_flutter.git\n      ref: master\n' >> pubspec.yaml
+              echo "✅ Override ditambahkan"
+            else
+              echo "ℹ️ dependency_overrides sudah ada"
+            fi
           fi
 
       - name: Flutter pub get
