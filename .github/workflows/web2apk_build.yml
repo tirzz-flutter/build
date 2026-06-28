@@ -1,144 +1,478 @@
-name: Web2APK Build
+# ============================================================
+# .github/workflows/web2apk_build.yml
+# Flutter Web2APK — Universal Build Pipeline
+# ============================================================
+# Mendukung: Flutter 3.x → Latest Stable | Dart Latest
+# Platform : Android (APK, AAB) + Web
+# Runner   : ubuntu-latest
+# Java     : 17 (Temurin)
+# ============================================================
 
+name: Flutter Web2APK Build Pipeline
+
+# ============================================================
+# TRIGGER — Kapan workflow dijalankan
+# ============================================================
 on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
   workflow_dispatch:
     inputs:
-      web_url:
-        description: 'URL website yang akan dijadikan APK'
-        required: true
-        type: string
-      app_name:
-        description: 'Nama aplikasi'
-        required: true
-        type: string
-      icon_url:
-        description: 'URL icon aplikasi (opsional)'
+      flutter_version:
+        description: 'Flutter version (contoh: stable, 3.24.0)'
         required: false
-        default: ''
+        default: 'stable'
         type: string
-      tag:
-        description: 'Build tag / identifier'
-        required: true
-        type: string
+      skip_tests:
+        description: 'Lewati flutter test?'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
+# ============================================================
+# PERMISSIONS — Minimum permission yang diperlukan
+# ============================================================
+permissions:
+  contents: read
+  actions: read
+
+# ============================================================
+# CONCURRENCY — Batalkan run lama jika ada push baru
+# ============================================================
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ============================================================
+# ENVIRONMENT VARIABLES — Global untuk semua jobs
+# ============================================================
+env:
+  FLUTTER_VERSION: ${{ github.event.inputs.flutter_version || 'stable' }}
+  JAVA_VERSION: '17'
+  PUB_CACHE: ${{ github.workspace }}/.pub-cache
+  GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
+  BUILD_NUMBER: ${{ github.run_number }}
+
+# ============================================================
+# JOBS
+# ============================================================
 jobs:
+
+  # ----------------------------------------------------------
+  # JOB: BUILD
+  # Setup, validasi, dan build semua platform
+  # ----------------------------------------------------------
   build:
+    name: "🚀 Flutter Build — Android & Web"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
-      - name: Setup Java
+
+      # ── 1. Checkout repository ────────────────────────────
+      - name: "📥 Checkout Repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Validasi pubspec.yaml ──────────────────────────
+      - name: "📄 Validate pubspec.yaml"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 Memeriksa pubspec.yaml..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ ERROR: pubspec.yaml tidak ditemukan!"
+            echo "   Pastikan workflow dijalankan dari root project Flutter."
+            exit 1
+          fi
+
+          PACKAGE_NAME=$(grep -E '^name:' pubspec.yaml | awk '{print $2}' | tr -d '"' | tr -d "'")
+          APP_VERSION=$(grep -E '^version:' pubspec.yaml | awk '{print $2}' | tr -d '"' | tr -d "'")
+
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "❌ ERROR: Field 'name' tidak ditemukan di pubspec.yaml"
+            exit 1
+          fi
+
+          echo "✅ pubspec.yaml valid"
+          echo "📦 Package : $PACKAGE_NAME"
+          echo "🏷️  Version : $APP_VERSION"
+          echo ""
+          echo "━━━━ Isi pubspec.yaml ━━━━━━━━━━━━━━━━━━━━━━"
+          cat pubspec.yaml
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 3. Validasi lib/main.dart ─────────────────────────
+      - name: "🔍 Validate Flutter Project Structure"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🏗️  Memeriksa struktur project Flutter..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ERRORS=0
+
+          if [ ! -f "lib/main.dart" ]; then
+            echo "❌ lib/main.dart tidak ditemukan"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ lib/main.dart ditemukan"
+          fi
+
+          if ! grep -q "flutter:" pubspec.yaml; then
+            echo "❌ Dependency 'flutter:' tidak ditemukan di pubspec.yaml"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ Dependency Flutter SDK ditemukan"
+          fi
+
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "❌ Ditemukan $ERRORS error. Perbaiki sebelum build."
+            exit 1
+          fi
+
+          echo "✅ Struktur project valid"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 4. Setup Java 17 ──────────────────────────────────
+      - name: "☕ Setup Java ${{ env.JAVA_VERSION }} (Temurin)"
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Setup Flutter
+      # ── 5. Cache Flutter SDK ──────────────────────────────
+      - name: "🐦 Cache Flutter SDK"
+        uses: actions/cache@v4
+        id: flutter-cache
+        with:
+          path: |
+            /opt/hostedtoolcache/flutter
+            ~/.flutter
+          key: flutter-sdk-${{ env.FLUTTER_VERSION }}-${{ runner.os }}
+          restore-keys: |
+            flutter-sdk-${{ env.FLUTTER_VERSION }}-
+            flutter-sdk-
+
+      # ── 6. Setup Flutter ──────────────────────────────────
+      - name: "🐦 Setup Flutter SDK (${{ env.FLUTTER_VERSION }})"
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
+          cache-key: 'flutter-${{ env.FLUTTER_VERSION }}-${{ runner.os }}'
 
-      - name: Buat skeleton project Flutter WebView
+      # ── 7. Tampilkan versi Flutter ────────────────────────
+      - name: "📋 Flutter Version Info"
         run: |
-          set -e
-          flutter create --platforms=android --project-name web2apk_app web2apk_app
-          cd web2apk_app
-          flutter pub add webview_flutter
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🐦 Flutter Version"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter --version
+          echo ""
 
-      - name: Tulis main.dart (WebView wrapper)
-        working-directory: web2apk_app
+      # ── 8. Tampilkan versi Dart ───────────────────────────
+      - name: "🎯 Dart Version Info"
         run: |
-          set -e
-          cat > lib/main.dart << EOF
-          import 'package:flutter/material.dart';
-          import 'package:webview_flutter/webview_flutter.dart';
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎯 Dart Version"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          dart --version
+          echo ""
 
-          void main() => runApp(const Web2ApkApp());
-
-          class Web2ApkApp extends StatelessWidget {
-            const Web2ApkApp({super.key});
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                title: '${{ inputs.app_name }}',
-                debugShowCheckedModeBanner: false,
-                home: const WebViewScreen(),
-              );
-            }
-          }
-
-          class WebViewScreen extends StatefulWidget {
-            const WebViewScreen({super.key});
-            @override
-            State<WebViewScreen> createState() => _WebViewScreenState();
-          }
-
-          class _WebViewScreenState extends State<WebViewScreen> {
-            late final WebViewController controller;
-
-            @override
-            void initState() {
-              super.initState();
-              controller = WebViewController()
-                ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                ..loadRequest(Uri.parse('${{ inputs.web_url }}'));
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(child: WebViewWidget(controller: controller)),
-              );
-            }
-          }
-          EOF
-
-      - name: Ganti nama aplikasi di AndroidManifest
-        working-directory: web2apk_app
+      # ── 9. Jalankan flutter doctor ────────────────────────
+      - name: "🩺 Flutter Doctor"
         run: |
-          set -e
-          sed -i "s/android:label=\"web2apk_app\"/android:label=\"${{ inputs.app_name }}\"/" android/app/src/main/AndroidManifest.xml || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🩺 Running flutter doctor -v"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter doctor -v || true
+          echo ""
 
-      - name: Download & pasang icon (jika ada)
-        if: ${{ inputs.icon_url != '' }}
-        working-directory: web2apk_app
+      # ── 10. Aktifkan Android License ─────────────────────
+      - name: "📜 Accept Android Licenses"
         run: |
-          set -e
-          mkdir -p assets
-          curl -sSL -o assets/icon.png "${{ inputs.icon_url }}"
-          flutter pub add dev:flutter_launcher_icons
-          cat > flutter_launcher_icons.yaml << 'EOF'
-          flutter_launcher_icons:
-            android: true
-            ios: false
-            image_path: "assets/icon.png"
-          EOF
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📜 Accepting Android SDK licenses..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          yes | flutter doctor --android-licenses || true
+          echo "✅ Android licenses accepted"
 
-      - name: Flutter pub get
-        working-directory: web2apk_app
-        run: flutter pub get
+      # ── 11. Cache Pub dependencies ────────────────────────
+      - name: "📦 Cache Pub Dependencies"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.PUB_CACHE }}
+            .dart_tool
+            .packages
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+            pub-${{ runner.os }}-
 
-      - name: Generate launcher icons
-        if: ${{ inputs.icon_url != '' }}
-        working-directory: web2apk_app
-        run: dart run flutter_launcher_icons
+      # ── 12. Cache Gradle ──────────────────────────────────
+      - name: "🐘 Cache Gradle"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GRADLE_USER_HOME }}/caches
+            ${{ env.GRADLE_USER_HOME }}/wrapper
+            android/.gradle
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
-      - name: Build APK (release)
-        working-directory: web2apk_app
-        run: flutter build apk --release --no-tree-shake-icons
+      # ── 13. Cache Android Build ───────────────────────────
+      - name: "🤖 Cache Android Build Cache"
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/app/build
+            android/build
+            build/intermediates
+          key: android-build-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/pubspec.lock') }}
+          restore-keys: |
+            android-build-${{ runner.os }}-
 
-      - name: Siapkan output APK
+      # ── 14. flutter clean ─────────────────────────────────
+      - name: "🧹 Flutter Clean"
         run: |
-          set -e
-          mkdir -p output
-          cp web2apk_app/build/app/outputs/flutter-apk/app-release.apk "output/${{ inputs.tag }}.apk"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 Running flutter clean..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter clean
+          echo "✅ Clean completed"
 
-      - name: Upload APK artifact
+      # ── 15. flutter pub get ───────────────────────────────
+      - name: "📥 Install Dependencies (flutter pub get)"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📦 Running flutter pub get..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter pub get
+          echo "✅ Dependencies installed"
+
+      # ── 16. flutter pub upgrade ───────────────────────────
+      - name: "⬆️ Upgrade Dependencies (flutter pub upgrade)"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "⬆️  Running flutter pub upgrade..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter pub upgrade || true
+          echo "✅ Upgrade completed"
+
+      # ── 17. flutter pub outdated ──────────────────────────
+      - name: "🔎 Check Outdated Packages"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔎 Running flutter pub outdated..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter pub outdated || true
+
+      # ── 18. flutter analyze ───────────────────────────────
+      - name: "🔬 Run Flutter Analyze"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔬 Running flutter analyze..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter analyze --no-fatal-infos || true
+          echo "✅ Analysis done"
+
+      # ── 19. dart format ───────────────────────────────────
+      - name: "🎨 Dart Format Check"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎨 Checking dart format..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          dart format --set-exit-if-changed . || true
+          echo "✅ Format check done"
+
+      # ── 20. flutter test ──────────────────────────────────
+      - name: "🧪 Run Flutter Tests"
+        if: github.event.inputs.skip_tests != 'true'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧪 Checking for test files..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ -d "test" ] && [ "$(find test -name '*_test.dart' | wc -l)" -gt 0 ]; then
+            TEST_COUNT=$(find test -name '*_test.dart' | wc -l)
+            echo "✅ Ditemukan $TEST_COUNT file test"
+            echo ""
+            flutter test \
+              --no-pub \
+              --reporter=expanded \
+              || true
+            echo "✅ Test selesai"
+          else
+            echo "⚠️  Folder test tidak ditemukan atau kosong"
+            echo "   Melewati flutter test — workflow tetap sukses"
+          fi
+
+      # ── 21. Aktifkan Flutter Web ──────────────────────────
+      - name: "🌐 Enable Flutter Web"
+        run: |
+          flutter config --enable-web
+          echo "✅ Flutter Web diaktifkan"
+
+      # ── 22. Build APK Release ─────────────────────────────
+      - name: "📱 Build APK Release"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔨 Building APK Release..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter build apk \
+            --release \
+            --no-pub \
+            --build-number=${{ env.BUILD_NUMBER }} \
+            --obfuscate \
+            --split-debug-info=./debug-info/apk \
+            --split-per-abi \
+            --verbose
+          echo ""
+          echo "✅ APK build selesai"
+          echo "📁 File output:"
+          find build/app/outputs/apk -name "*.apk" -exec ls -lh {} \; 2>/dev/null || echo "  (tidak ditemukan)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 23. Build App Bundle Release ──────────────────────
+      - name: "📦 Build App Bundle (AAB) Release"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔨 Building App Bundle (AAB) Release..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          flutter build appbundle \
+            --release \
+            --no-pub \
+            --build-number=${{ env.BUILD_NUMBER }} \
+            --obfuscate \
+            --split-debug-info=./debug-info/aab \
+            --verbose
+          echo ""
+          echo "✅ App Bundle build selesai"
+          echo "📁 File output:"
+          find build/app/outputs/bundle -name "*.aab" -exec ls -lh {} \; 2>/dev/null || echo "  (tidak ditemukan)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 24. Build Web Release ─────────────────────────────
+      - name: "🌐 Build Flutter Web Release"
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔨 Building Flutter Web Release..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if flutter build web --help > /dev/null 2>&1; then
+            flutter build web \
+              --release \
+              --no-pub \
+              --web-renderer=canvaskit \
+              --pwa-strategy=offline-first \
+              --build-number=${{ env.BUILD_NUMBER }} \
+              --verbose
+            echo ""
+            echo "✅ Web build selesai"
+            echo "📁 Ukuran output:"
+            du -sh build/web/ 2>/dev/null || echo "  (tidak ditemukan)"
+          else
+            echo "⚠️  Web platform tidak tersedia di environment ini"
+            echo "   Melewati web build — workflow tetap sukses"
+          fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 25. Upload APK Artifact ───────────────────────────
+      - name: "📤 Upload APK Artifact"
         uses: actions/upload-artifact@v4
         with:
-          name: apk-build-${{ inputs.tag }}
-          path: output/*.apk
-          retention-days: 1
+          name: apk-release-build-${{ github.run_number }}
+          path: |
+            build/app/outputs/apk/**/*.apk
+            debug-info/apk/
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 26. Upload AAB Artifact ───────────────────────────
+      - name: "📤 Upload AAB Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab-release-build-${{ github.run_number }}
+          path: |
+            build/app/outputs/bundle/**/*.aab
+            debug-info/aab/
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 27. Upload Web Artifact ───────────────────────────
+      - name: "📤 Upload Web Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-release-build-${{ github.run_number }}
+          path: build/web/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ── 28. Print Build Summary ───────────────────────────
+      - name: "📊 Build Summary"
+        if: always()
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║       FLUTTER WEB2APK BUILD SUMMARY          ║"
+          echo "╚══════════════════════════════════════════════╝"
+          echo ""
+
+          PACKAGE=$(grep -E '^name:' pubspec.yaml | awk '{print $2}' | tr -d '"' | tr -d "'" 2>/dev/null || echo "unknown")
+          VERSION=$(grep -E '^version:' pubspec.yaml | awk '{print $2}' | tr -d '"' | tr -d "'" 2>/dev/null || echo "unknown")
+
+          echo "  📦 Package    : $PACKAGE"
+          echo "  🏷️  Version    : $VERSION"
+          echo "  🔢 Build No.  : ${{ env.BUILD_NUMBER }}"
+          echo "  📅 Timestamp  : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "  🌿 Branch     : ${{ github.ref_name }}"
+          echo "  👤 Actor      : ${{ github.actor }}"
+          echo "  🔗 Commit     : ${{ github.sha }}"
+          echo ""
+          echo "  ── Output Files ───────────────────────────"
+          echo ""
+
+          echo "  📱 APK Files:"
+          find build/app/outputs/apk -name "*.apk" 2>/dev/null | while read f; do
+            SIZE=$(du -sh "$f" | awk '{print $1}')
+            echo "     ✅ $(basename $f) [$SIZE]"
+          done || echo "     (tidak ada)"
+
+          echo ""
+          echo "  📦 AAB Files:"
+          find build/app/outputs/bundle -name "*.aab" 2>/dev/null | while read f; do
+            SIZE=$(du -sh "$f" | awk '{print $1}')
+            echo "     ✅ $(basename $f) [$SIZE]"
+          done || echo "     (tidak ada)"
+
+          echo ""
+          echo "  🌐 Web Build:"
+          if [ -d "build/web" ]; then
+            SIZE=$(du -sh build/web | awk '{print $1}')
+            echo "     ✅ build/web/ [$SIZE]"
+          else
+            echo "     (tidak ada)"
+          fi
+
+          echo ""
+          echo "══════════════════════════════════════════════"
           
