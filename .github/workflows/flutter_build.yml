@@ -1,0 +1,111 @@
+name: Flutter Build APK
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'URL ZIP project Flutter'
+        required: true
+        type: string
+      tag:
+        description: 'Build tag'
+        required: true
+        type: string
+      build_type:
+        description: 'release atau debug'
+        required: false
+        default: 'release'
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Download and Extract ZIP
+        run: |
+          echo "Downloading: ${{ inputs.zip_url }}"
+          curl -L --retry 3 --max-time 120 -o source.zip "${{ inputs.zip_url }}"
+          unzip -q source.zip -d project_raw
+
+          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname)
+          if [ -z "$FLUTTER_ROOT" ]; then
+            echo "❌ pubspec.yaml tidak ditemukan di ZIP!"
+            exit 1
+          fi
+          echo "✅ Flutter root: $FLUTTER_ROOT"
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
+
+      - name: Fix font_awesome_flutter compatibility
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: |
+          rm -f pubspec.lock
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            echo "Detected font_awesome_flutter, applying git override..."
+            python3 << 'PYEOF'
+content = open("pubspec.yaml").read()
+override = """
+dependency_overrides:
+  font_awesome_flutter:
+    git:
+      url: https://github.com/fluttercommunity/font_awesome_flutter.git
+      ref: master
+"""
+if "dependency_overrides:" not in content:
+    content = content.rstrip() + "\n" + override
+    open("pubspec.yaml", "w").write(content)
+    print("✅ Override ditambahkan")
+else:
+    print("ℹ️ dependency_overrides sudah ada")
+PYEOF
+          fi
+
+      - name: Flutter pub get
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter pub get
+
+      - name: Build APK Release
+        if: ${{ inputs.build_type == 'release' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Build APK Debug
+        if: ${{ inputs.build_type != 'release' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --debug --no-tree-shake-icons
+
+      - name: Find APK
+        run: |
+          APK=$(find "${{ env.FLUTTER_ROOT }}/build/app/outputs" -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "❌ APK tidak ditemukan!"
+            exit 1
+          fi
+          echo "✅ APK: $APK"
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.tag }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 1
+          
