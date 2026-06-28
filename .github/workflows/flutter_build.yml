@@ -34,7 +34,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
+          flutter-version: '3.32.0'
           channel: stable
           cache: false
 
@@ -55,23 +55,11 @@ jobs:
           echo "[OK] Flutter root: $FLUTTER_ROOT"
           echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
-      - name: Fix font_awesome_flutter compatibility
+      - name: Flutter pub get
         working-directory: ${{ env.FLUTTER_ROOT }}
         run: |
           rm -f pubspec.lock
-          if grep -q "font_awesome_flutter" pubspec.yaml; then
-            if ! grep -q "dependency_overrides:" pubspec.yaml; then
-              echo "Detected font_awesome_flutter, pinning to compatible version (10.7.0)..."
-              printf '\ndependency_overrides:\n  font_awesome_flutter: 10.7.0\n' >> pubspec.yaml
-              echo "[OK] Override ditambahkan"
-            else
-              echo "[INFO] dependency_overrides sudah ada"
-            fi
-          fi
-
-      - name: Flutter pub get
-        working-directory: ${{ env.FLUTTER_ROOT }}
-        run: flutter pub get
+          flutter pub get
 
       - name: Build APK Release
         if: ${{ inputs.build_type == 'release' }}
