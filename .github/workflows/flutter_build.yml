@@ -1,537 +1,111 @@
-# ============================================================
-# .github/workflows/flutter_build.yml
-# Flutter Build — Triggered via Telegram Bot (GitHub API)
-# ============================================================
-# Kompatibel dengan payload bot:
-# POST /repos/{owner}/{repo}/actions/workflows/flutter_build.yml/dispatches
-# {
-#   "ref": "main",
-#   "inputs": {
-#     "zip_url": "...",
-#     "tag": "...",
-#     "build_type": "release"
-#   }
-# }
-# ============================================================
-
-name: Flutter Build
-
-# ============================================================
-# TRIGGER — push, pull_request, dan workflow_dispatch
-# PENTING: Ketiga input (zip_url, tag, build_type) hanya aktif
-#          saat workflow_dispatch. Push/PR tidak memerlukan input.
-# ============================================================
+name: Flutter Build APK
 on:
-  push:
-    branches:
-      - main
-      - master
-      - develop
-      - 'release/**'
-      - 'hotfix/**'
-  pull_request:
-    branches:
-      - main
-      - master
-      - develop
   workflow_dispatch:
     inputs:
       zip_url:
-        description: 'URL ZIP file project Flutter (wajib saat dispatch)'
+        description: 'URL ZIP project Flutter'
         required: true
         type: string
       tag:
-        description: 'Tag / label untuk build ini'
+        description: 'Build tag'
         required: true
         type: string
       build_type:
-        description: 'Tipe build: release atau debug'
-        required: true
+        description: 'release atau debug'
+        required: false
+        default: 'release'
         type: string
 
-# ============================================================
-# PERMISSIONS — Minimum yang diperlukan
-# ============================================================
 permissions:
   contents: read
-  actions: read
+  actions: write
 
-# ============================================================
-# CONCURRENCY — Batalkan run lama jika ada yang baru
-# ============================================================
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# ============================================================
-# ENVIRONMENT VARIABLES GLOBAL
-# ============================================================
-env:
-  JAVA_VERSION: '17'
-  FLUTTER_VERSION: 'stable'
-  PUB_CACHE: ${{ github.workspace }}/.pub-cache
-  GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
-  BUILD_NUMBER: ${{ github.run_number }}
-  WORK_DIR: ${{ github.workspace }}/flutter_project
-
-# ============================================================
-# JOBS
-# ============================================================
 jobs:
-
   build:
-    name: "🚀 Flutter Build [${{ github.event.inputs.tag || github.ref_name }}]"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 30
     steps:
-
-      # ── 1. Checkout repository ────────────────────────────
-      - name: "📥 Checkout Repository"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # ── 2. Print informasi build ──────────────────────────
-      - name: "📋 Print Build Info"
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📋 Build Information"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  🔄 Event      : ${{ github.event_name }}"
-          echo "  🌿 Branch     : ${{ github.ref_name }}"
-          echo "  👤 Actor      : ${{ github.actor }}"
-          echo "  🔗 Commit     : ${{ github.sha }}"
-          echo "  🔢 Build No.  : ${{ env.BUILD_NUMBER }}"
-          echo "  📅 Timestamp  : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "  ── Dispatch Inputs ──────────────────────────"
-            echo "  🏷️  tag        : ${{ github.event.inputs.tag }}"
-            echo "  🔨 build_type : ${{ github.event.inputs.build_type }}"
-            echo "  🔗 zip_url    : ${{ github.event.inputs.zip_url }}"
-          fi
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 3. Validasi input (hanya saat workflow_dispatch) ──
-      - name: "🔍 Validate Dispatch Inputs"
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔍 Validating dispatch inputs..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ZIP_URL="${{ github.event.inputs.zip_url }}"
-          TAG="${{ github.event.inputs.tag }}"
-          BUILD_TYPE="${{ github.event.inputs.build_type }}"
-
-          if [ -z "$ZIP_URL" ]; then
-            echo "❌ ERROR: Input 'zip_url' tidak boleh kosong"
-            exit 1
-          fi
-
-          if [ -z "$TAG" ]; then
-            echo "❌ ERROR: Input 'tag' tidak boleh kosong"
-            exit 1
-          fi
-
-          if [ -z "$BUILD_TYPE" ]; then
-            echo "❌ ERROR: Input 'build_type' tidak boleh kosong"
-            exit 1
-          fi
-
-          if [[ ! "$ZIP_URL" =~ ^https?:// ]]; then
-            echo "❌ ERROR: 'zip_url' harus berupa URL valid (http/https)"
-            echo "   Diterima: $ZIP_URL"
-            exit 1
-          fi
-
-          echo "✅ zip_url    : OK"
-          echo "✅ tag        : OK ($TAG)"
-          echo "✅ build_type : OK ($BUILD_TYPE)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 4. Setup Java 17 ──────────────────────────────────
-      - name: "☕ Setup Java ${{ env.JAVA_VERSION }} (Temurin)"
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          java-version: '17'
 
-      # ── 5. Cache Flutter SDK ──────────────────────────────
-      - name: "🐦 Cache Flutter SDK"
-        uses: actions/cache@v4
-        with:
-          path: |
-            /opt/hostedtoolcache/flutter
-            ~/.flutter
-          key: flutter-sdk-stable-${{ runner.os }}
-          restore-keys: |
-            flutter-sdk-stable-
-            flutter-sdk-
-
-      # ── 6. Setup Flutter Stable ───────────────────────────
-      - name: "🐦 Setup Flutter SDK (Stable)"
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
-          cache: true
-          cache-key: 'flutter-stable-${{ runner.os }}'
+          channel: stable
+          cache: false
 
-      # ── 7. Tampilkan Flutter Version ──────────────────────
-      - name: "📋 Flutter Version"
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Download and Extract ZIP
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🐦 Flutter Version"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter --version
+          echo "Downloading: ${{ inputs.zip_url }}"
+          curl -L --retry 3 --max-time 120 -o source.zip "${{ inputs.zip_url }}"
+          unzip -q source.zip -d project_raw
 
-      # ── 8. Tampilkan Dart Version ─────────────────────────
-      - name: "🎯 Dart Version"
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🎯 Dart Version"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          dart --version
-
-      # ── 9. Jalankan flutter doctor -v ─────────────────────
-      - name: "🩺 Flutter Doctor"
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🩺 Running flutter doctor -v"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter doctor -v || true
-
-      # ── 10. Accept Android SDK Licenses ───────────────────
-      - name: "📜 Accept Android SDK Licenses"
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📜 Accepting Android licenses..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          yes | flutter doctor --android-licenses || true
-          echo "✅ Licenses accepted"
-
-      # ── 11. Cache Pub Dependencies ────────────────────────
-      - name: "📦 Cache Pub Dependencies"
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.PUB_CACHE }}
-            ${{ env.WORK_DIR }}/.dart_tool
-          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
-            pub-${{ runner.os }}-
-
-      # ── 12. Cache Gradle ──────────────────────────────────
-      - name: "🐘 Cache Gradle"
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.GRADLE_USER_HOME }}/caches
-            ${{ env.GRADLE_USER_HOME }}/wrapper
-            ${{ env.WORK_DIR }}/android/.gradle
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}-${{ github.run_id }}
-          restore-keys: |
-            gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-            gradle-${{ runner.os }}-
-
-      # ── 13. Download ZIP (hanya saat workflow_dispatch) ───
-      - name: "⬇️ Download ZIP from zip_url"
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "⬇️  Downloading ZIP..."
-          echo "    URL: ${{ github.event.inputs.zip_url }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          mkdir -p /tmp/flutter_zip
-
-          HTTP_STATUS=$(curl -L \
-            --output /tmp/flutter_zip/project.zip \
-            --write-out "%{http_code}" \
-            --silent \
-            --show-error \
-            --max-time 300 \
-            --retry 3 \
-            --retry-delay 5 \
-            "${{ github.event.inputs.zip_url }}")
-
-          echo "📡 HTTP Status: $HTTP_STATUS"
-
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ ERROR: Gagal download ZIP (HTTP $HTTP_STATUS)"
-            echo "   URL: ${{ github.event.inputs.zip_url }}"
+          FLUTTER_ROOT=$(find project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname)
+          if [ -z "$FLUTTER_ROOT" ]; then
+            echo "❌ pubspec.yaml tidak ditemukan di ZIP!"
             exit 1
           fi
+          echo "✅ Flutter root: $FLUTTER_ROOT"
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT" >> $GITHUB_ENV
 
-          ZIP_SIZE=$(du -sh /tmp/flutter_zip/project.zip | awk '{print $1}')
-          echo "✅ Download berhasil (Ukuran: $ZIP_SIZE)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 14. Extract ZIP (hanya saat workflow_dispatch) ────
-      - name: "📂 Extract ZIP"
-        if: github.event_name == 'workflow_dispatch'
+      - name: Fix font_awesome_flutter compatibility
+        working-directory: ${{ env.FLUTTER_ROOT }}
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📂 Extracting ZIP..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          mkdir -p /tmp/flutter_extracted
-
-          # Cek tipe file sebelum ekstrak
-          FILE_TYPE=$(file /tmp/flutter_zip/project.zip)
-          echo "📄 File type: $FILE_TYPE"
-
-          unzip -q /tmp/flutter_zip/project.zip \
-            -d /tmp/flutter_extracted \
-            || {
-              echo "❌ ERROR: Gagal mengekstrak ZIP"
-              echo "   Tipe file: $FILE_TYPE"
-              echo "   Pastikan zip_url mengarah ke file ZIP yang valid"
-              exit 1
-            }
-
-          echo "✅ Ekstraksi berhasil"
-          echo "📁 Isi direktori hasil ekstraksi (level 2):"
-          find /tmp/flutter_extracted -maxdepth 2 | head -30
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 15. Cari Flutter project otomatis ────────────────
-      #        Saat dispatch  → cari di /tmp/flutter_extracted
-      #        Saat push/PR   → gunakan repo yang sudah di-checkout
-      - name: "🔍 Find Flutter Project (pubspec.yaml)"
-        id: find_project
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔍 Mencari pubspec.yaml..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          EVENT="${{ github.event_name }}"
-
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            SEARCH_ROOT="/tmp/flutter_extracted"
-          else
-            SEARCH_ROOT="${{ github.workspace }}"
+          rm -f pubspec.lock
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            echo "Detected font_awesome_flutter, applying git override..."
+            python3 << 'PYEOF'
+content = open("pubspec.yaml").read()
+override = """
+dependency_overrides:
+  font_awesome_flutter:
+    git:
+      url: https://github.com/fluttercommunity/font_awesome_flutter.git
+      ref: master
+"""
+if "dependency_overrides:" not in content:
+    content = content.rstrip() + "\n" + override
+    open("pubspec.yaml", "w").write(content)
+    print("✅ Override ditambahkan")
+else:
+    print("ℹ️ dependency_overrides sudah ada")
+PYEOF
           fi
 
-          echo "📂 Search root: $SEARCH_ROOT"
+      - name: Flutter pub get
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter pub get
 
-          # Cari pubspec.yaml paling dangkal, skip build/ dan .dart_tool/
-          PUBSPEC_PATH=$(find "$SEARCH_ROOT" \
-            -name "pubspec.yaml" \
-            -not -path "*/build/*" \
-            -not -path "*/.dart_tool/*" \
-            -not -path "*/.pub-cache/*" \
-            -not -path "*/\.*" \
-            | awk '{ print length, $0 }' \
-            | sort -n \
-            | head -n 1 \
-            | awk '{print $2}')
+      - name: Build APK Release
+        if: ${{ inputs.build_type == 'release' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --release --no-tree-shake-icons
 
-          if [ -z "$PUBSPEC_PATH" ]; then
-            echo "❌ ERROR: pubspec.yaml tidak ditemukan!"
-            echo ""
-            echo "📁 Struktur direktori (depth 4):"
-            find "$SEARCH_ROOT" -maxdepth 4 | head -60
-            echo ""
-            echo "💡 Pastikan ZIP atau repo berisi project Flutter yang valid"
+      - name: Build APK Debug
+        if: ${{ inputs.build_type != 'release' }}
+        working-directory: ${{ env.FLUTTER_ROOT }}
+        run: flutter build apk --debug --no-tree-shake-icons
+
+      - name: Find APK
+        run: |
+          APK=$(find "${{ env.FLUTTER_ROOT }}/build/app/outputs" -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "❌ APK tidak ditemukan!"
             exit 1
           fi
+          echo "✅ APK: $APK"
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
 
-          FLUTTER_DIR=$(dirname "$PUBSPEC_PATH")
-          echo "✅ pubspec.yaml ditemukan : $PUBSPEC_PATH"
-          echo "📂 Flutter project dir   : $FLUTTER_DIR"
-
-          # Validasi lib/main.dart
-          if [ ! -f "$FLUTTER_DIR/lib/main.dart" ]; then
-            echo "⚠️  Warning: lib/main.dart tidak ditemukan"
-            echo "   Build akan tetap dilanjutkan..."
-          else
-            echo "✅ lib/main.dart ditemukan"
-          fi
-
-          # Salin ke WORK_DIR (hindari konflik jika sudah di workspace)
-          if [ "$FLUTTER_DIR" != "${{ env.WORK_DIR }}" ]; then
-            mkdir -p "${{ env.WORK_DIR }}"
-            cp -r "$FLUTTER_DIR/." "${{ env.WORK_DIR }}/"
-            echo "✅ Project disalin ke: ${{ env.WORK_DIR }}"
-          else
-            echo "ℹ️  Project sudah berada di WORK_DIR"
-          fi
-
-          echo "project_dir=${{ env.WORK_DIR }}" >> $GITHUB_OUTPUT
-
-          # Tampilkan pubspec.yaml
-          echo ""
-          echo "━━━━ pubspec.yaml ━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          cat "$PUBSPEC_PATH"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 16. flutter clean ─────────────────────────────────
-      - name: "🧹 Flutter Clean"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🧹 Running flutter clean..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter clean
-          echo "✅ Clean selesai"
-
-      # ── 17. flutter pub get ───────────────────────────────
-      - name: "📦 Flutter Pub Get"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📦 Running flutter pub get..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter pub get
-          echo "✅ flutter pub get selesai"
-
-      # ── 18. flutter pub upgrade ───────────────────────────
-      - name: "⬆️ Flutter Pub Upgrade"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "⬆️  Running flutter pub upgrade..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter pub upgrade || true
-          echo "✅ flutter pub upgrade selesai"
-
-      # ── 19. flutter pub outdated ──────────────────────────
-      - name: "🔎 Flutter Pub Outdated"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔎 Running flutter pub outdated..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter pub outdated || true
-
-      # ── 20. flutter analyze ───────────────────────────────
-      - name: "🔬 Flutter Analyze"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔬 Running flutter analyze..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          flutter analyze --no-fatal-infos || true
-          echo "✅ Analyze selesai"
-
-      # ── 21. flutter test ──────────────────────────────────
-      - name: "🧪 Flutter Test"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🧪 Checking for test files..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          if [ -d "test" ] && [ "$(find test -name '*_test.dart' 2>/dev/null | wc -l)" -gt 0 ]; then
-            TEST_COUNT=$(find test -name '*_test.dart' | wc -l)
-            echo "✅ Ditemukan $TEST_COUNT file test"
-            flutter test --no-pub --reporter=expanded || true
-            echo "✅ flutter test selesai"
-          else
-            echo "⚠️  Folder test tidak ada atau kosong — dilewati"
-            echo "   Workflow tetap sukses"
-          fi
-
-      # ── 22. Tentukan build flag dari build_type ───────────
-      - name: "⚙️ Resolve Build Type"
-        id: build_flags
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "⚙️  Resolving build type..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          # Saat push/PR gunakan release sebagai default
-          RAW_TYPE="${{ github.event.inputs.build_type }}"
-          if [ -z "$RAW_TYPE" ]; then
-            RAW_TYPE="release"
-            echo "ℹ️  build_type tidak disediakan (push/PR), default: release"
-          fi
-
-          echo "🔨 Build type input: $RAW_TYPE"
-
-          if echo "$RAW_TYPE" | grep -qi "debug"; then
-            FLAG="--debug"
-            MODE="debug"
-          else
-            FLAG="--release"
-            MODE="release"
-          fi
-
-          echo "✅ Build mode : $MODE"
-          echo "✅ Build flag : $FLAG"
-          echo "flag=$FLAG" >> $GITHUB_OUTPUT
-          echo "mode=$MODE" >> $GITHUB_OUTPUT
-
-      # ── 23. Build APK ─────────────────────────────────────
-      - name: "📱 Build APK (${{ steps.build_flags.outputs.mode }})"
-        working-directory: ${{ env.WORK_DIR }}
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔨 Building APK (${{ steps.build_flags.outputs.mode }})..."
-          echo "    Tag       : ${{ github.event.inputs.tag || github.ref_name }}"
-          echo "    Build No. : ${{ env.BUILD_NUMBER }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          flutter build apk \
-            ${{ steps.build_flags.outputs.flag }} \
-            --no-pub \
-            --build-number=${{ env.BUILD_NUMBER }} \
-            --split-per-abi \
-            --verbose \
-            2>&1 | tee /tmp/build_log.txt
-
-          BUILD_EXIT=${PIPESTATUS[0]}
-
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo ""
-            echo "❌ ERROR: flutter build apk gagal (exit code: $BUILD_EXIT)"
-            echo ""
-            echo "━━━━━━━━━━ BUILD LOG — LAST 150 LINES ━━━━━━"
-            tail -150 /tmp/build_log.txt
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            exit 1
-          fi
-
-          echo ""
-          echo "✅ APK build berhasil!"
-          echo "📁 File APK:"
-          find build/app/outputs/apk -name "*.apk" -exec ls -lh {} \; 2>/dev/null \
-            || echo "  (tidak ditemukan)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 24. Rename APK dengan tag ─────────────────────────
-      - name: "✏️ Rename APK with Tag"
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✏️  Renaming APK output files..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          RAW_TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          # Sanitasi: ganti karakter non-alfanumerik dengan underscore
-          SAFE_TAG=$(echo "$RAW_TAG" | tr -cs 'a-zA-Z0-9._-' '_' | sed 's/_$//')
-
-          mkdir -p /tmp/apk_output
-
-          APK_COUNT=0
-          find "${{ env.WORK_DIR }}/build/app/outputs/apk" \
-            -name "*.apk" 2>/dev/null | while read APK_FILE; do
-            BASENAME=$(basename "$APK_FILE" .apk)
-            NEW_NAME="${SAFE_TAG}_${BASENAME}_build${{ env.BUILD_NUMBER }}.apk"
-            cp "$APK_FILE" "/tmp/apk_output/$NEW_NAME"
-            SIZE=$(du -sh "/tmp/apk_output/$NEW_NAME" | awk '{print $1}')
-            echo "  📱 $NEW_NAME [$SIZE]"
-            APK_COUNT=$((APK_COUNT + 1))
-          done
-
-          echo ""
-          echo "📁 Total APK di output:"
-          ls -lh /tmp/apk_output/ 2>/dev/null || echo "  (kosong)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      # ── 25. Upload APK Artifact ───────────────────────────
-      - name: "📤 Upload APK Artifact"
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
-        w
+        with:
+          name: apk-${{ inputs.tag }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 1
+          
